@@ -1,0 +1,26 @@
+#!/bin/bash
+
+
+del_tomcat(){
+######删除nginx项目开始######
+
+#关闭nginx
+service $groupname stop
+
+if [ `echo $?` -eq 0 ];then
+    action "关闭$groupname" /bin/true
+else
+    action "关闭$groupname" /bin/false
+    exit 1
+fi
+
+#删除nginx
+rm -rf /webapps/tomcat/$groupname
+if [ `echo $?` -eq 0 ];then
+    action "删除 $groupname" /bin/true
+else
+    action "删除 $groupname" /bin/false
+    exit 2
+fi
+
+}

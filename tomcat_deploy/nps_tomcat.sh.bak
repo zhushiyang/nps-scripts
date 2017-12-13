@@ -1,0 +1,323 @@
+#!/bin/bash
+#auto install and config tomcat
+#2017年7月13日08:06:48
+#max
+#=============================定义初始化变量===========================#
+. /etc/init.d/functions
+
+codedir=/server/procode             #本地存放源代码和sql文件目录
+pkgdir=/server/softpkg              #本地存放tomcat和jdk软件包目录
+wardir=/server/project              #生成war包后，存放war的目录
+ipinfo=/server/.ipinfo/ip.txt       #本地存放分发过密钥的IP地址和端口
+scripts=/server/scripts             #本地所有脚本存放路径
+rpmdir=/server/yum                  #本地rpm包存放路径
+jdkdir=/webapps/jdk                 #远程存放jdk的目录
+tomcat_pro=/webapps/tomcat          #远程存放tomcat程序的父目录
+resoftpkg=/webapps/softpkg          #远程存放jdk压缩包和脚本的目录
+expect_rpm=expect-5.44.1.15-5.el6_4.x86_64.rpm  #expect软件包名
+create_grant_dbuser=create_mysqluser.exp   #远程自动化操作数据库脚本
+jdbcfile=/server/softpkg/jdbc.properties     #jdbc模板
+sshkey=/server/scripts/sshkey_deploy/nps_deploy_sshkey.sh
+
+ip=$1                               #位置参数1记录ip
+start_port=$2                       #位置参数2记录tomcat启动端口
+shutdown_port=$3                    #位置参数3记录tomcat关闭端口
+code_pkgname=$4                     #位置参数4记录源码包名
+sqlname=$5                          #位置参数5记录sql文件名
+jdbc_dbname=$6                      #位置参数6记录数据库名
+jdbc_username=$7                    #位置参数7记录用户名
+jdbc_password=$8                    #位置参数8记录密码
+
+#=============================ANT=初始化变量===========================#
+pkgname_path=$(echo $code_pkgname | cut -d. -f1) #源码包解压后的目录
+Now=$(date +%Y%m%d%H%M%S)
+flags=1
+old_jdbc_dbip=$(cat "$pkgdir"//jdbc.properties |sed -n 3p|cut -d/ -f3|cut -d: -f1)
+old_jdbc_dbname=$(cat "$pkgdir"/jdbc.properties |sed -n 3p|cut -d/ -f4 |cut -d ? -f1)
+old_jdbc_username=$(cat "$pkgdir"/jdbc.properties |sed -n 4p|cut -d= -f2)
+old_jdbc_password=$(cat "$pkgdir"/jdbc.properties |sed -n 5p|cut -d= -f2)
+
+
+#=============================定义======函数===========================#
+deploy_sshkey(){
+   sh $sshkey $ip
+}
+
+ant_build() {
+
+
+  #进入源码包存放目录
+  cd "$codedir"
+
+  #检测是否存在源码包
+  if [ -e "$code_pkgname" ]
+  then
+    action "检测是否存在源码包压缩文件" /bin/true
+    flags=true
+  else
+    action "检测是否存在源码包压缩文件" /bin/false
+    exit 1
+  fi
+
+  #对源码包进行解压缩
+  unzip "$code_pkgname" >/dev/null
+  flags=$(echo $?)
+  if [ "$flags" -eq 0 ]
+  then
+    action "正在对源码包进行解压" /bin/true
+  else
+    action "正在对源码包进行解压" /bin/false
+    exit 1
+  fi
+
+  #解压成功后进入项目目录
+  if [ -d "$pkgname_path" ]
+  then
+    cd "$pkgname_path"
+    action "正在进入项目目录" /bin/true
+  else
+    action "正在进入项目目录" /bin/false
+
+  fi
+
+  #拷贝build.xml、build.properties和jdbc.properties文件
+  cp "$pkgdir"/build.xml ./
+  cp "$pkgdir"/build.properties ./
+  cp "$jdbcfile" ./
+
+  #判断是否拷贝成功
+  if [ -e build.xml ]
+  then
+    action "正在拷贝build.xml" /bin/true
+  else
+    action "正在拷贝build.xml" /bin/false
+    exit 1
+  fi
+
+  if [ -e build.properties ]
+  then
+    action "正在拷贝build.properties" /bin/true
+  else
+    action "正在拷贝build.properties" /bin/false
+    exit 1
+  fi
+
+  if [ -e jdbc.properties ]
+  then
+    action "正在拷贝jdbc.properties" /bin/true
+  else
+    action "正在拷贝jdbc.properties" /bin/false
+    exit 1
+  fi
+
+  #对build.properties文件进行编辑
+  sed -i "s#protemp#$pkgname_path#" build.properties
+  sed -i "s#jdbctemp#$Now#" build.properties
+  sed -i "s#hometemp#$PWD#" build.properties
+  #对jdbc.properties文件进行编辑
+  sed -i "3s#$old_jdbc_dbip#$dbip#" jdbc.properties
+  sed -i "3s#$old_jdbc_dbname#$jdbc_dbname#" jdbc.properties
+  sed -i "4s#$old_jdbc_username#$jdbc_username#" jdbc.properties
+  sed -i "5s#$old_jdbc_password#$jdbc_password#" jdbc.properties
+
+  #执行ant对项目进行打包
+  /usr/bin/ant >/dev/null
+
+  #判断ant执行结果
+  flags=$(echo $?)
+
+  if [ "$flags" -eq 0 ]
+  then
+    action "正在使用ant对项目打包！" /bin/true
+  else
+    action "正在使用ant对项目打包！" /bin/false
+    exit 1
+  fi
+
+  #进入war包存放的目录
+  cd ./dist
+
+  #对tomcat进行复制，以及将war包存放在tomcat目录下
+  cp -r $wardir/tomcat $wardir/tomcat$Now
+  cp ${pkgname_path}.war  $wardir/tomcat$Now/webapps/${pkgname_path}${Now}.war
+
+  sed -i "10s#_group01#${Now}#g" $wardir/tomcat$Now/init.d/tomcat
+  #进入wardir目录
+  cd "$wardir"
+
+  #修改tomcat server.xml文件（启动端口，关闭端口，war包项目路径）
+  sed -i "s#8005#$shutdown_port#" $wardir/tomcat$Now/conf/server.xml
+  sed -i "s#8080#$start_port#" $wardir/tomcat$Now/conf/server.xml
+  sed -i "s#XXX#${pkgname_path}${Now}#" $wardir/tomcat$Now/conf/server.xml
+
+  #对tomcat目录进行压缩
+  tar -zcf tomcat${Now}.tar.gz tomcat$Now
+
+}
+
+jdk_install(){
+ 
+  #此步骤用于修改目标服务器的环境变量
+  #ssh root@$ip '. /etc/profile && echo "PATH=$PATH" >>/etc/bashrc'
+  jre=jdk.tar.gz 
+  #检测目标服务器是否存在JRE环境
+  ssh root@$ip '. /etc/profile && java -version' >/dev/null 2>&1
+  flags_jre=$(echo $?)
+  flags_jdk=0
+  if [ "$flags_jre" -eq 0 ]
+  then
+    action "检测目标服务器是否存在jre环境" /bin/true 
+    
+    #检测是否存在JDK环境
+    ssh root@$ip '. /etc/profile && javac -version' >/dev/null 2>&1
+    flags_jdk=$(echo $?)
+    if [ "$flags_jdk" -eq 0 ]
+    then
+      action "检测目标服务器是否存在jdk环境" /bin/true 
+    else
+      action "检测目标服务器是否存在jdk环境" /bin/false 
+    fi
+  else
+    action "检测目标服务器是否存在jre环境" /bin/false
+  fi
+  
+  #不存在环境下载并安装JDK
+  if [ "$flags_jre" -ne 0 -o "$flags_jdk" -ne 0 ]
+  then
+    #情况1：不存在
+    #创建远程目录
+    ssh root@$ip mkdir -p $jdkdir           #存放jdk的目录
+    ssh root@$ip mkdir -p $tomcat_pro       #存放tomcat程序的父目录
+    ssh root@$ip mkdir -p $resoftpkg
+    action "正在传输JDK到目标服务器" /bin/true
+
+    #传输JDK源码包
+    scp $pkgdir/$jre root@$ip:$resoftpkg
+    flags_scp=$(echo $?)
+    if [ "$flags_scp" -eq 0 ]
+    then
+      action "传输JDK源码包成功" /bin/true 
+    else
+      action "传输JDK源码包成功" /bin/false 
+    fi
+    
+    #对源码包进行解压缩
+    ssh root@$ip tar -zxf $resoftpkg/$jre -C $jdkdir
+    flags_ssh=$(echo $?) 
+    if [ "$flags_ssh" -eq 0 ]
+    then
+      action "解压JDK源码包成功" /bin/true 
+    else
+      action "解压JDK源码包成功" /bin/false 
+    fi
+   
+    #对JDK进行环境变量配置
+    ssh root@$ip 'echo JAVA_HOME=/webapps/jdk >>/etc/profile'
+    ssh root@$ip 'echo export JAVA_HOME >>/etc/profile'
+    ssh root@$ip 'echo JRE_HOME=/webapps/jdk/jre >>/etc/profile'
+    ssh root@$ip 'echo export JRE_HOME >>/etc/profile'
+    ssh root@$ip 'echo export CLASSPATH=.:\$JAVA_HOME/lib:\$JRE_HOME/lib:\$CLASSPATH >>/etc/profile'
+    ssh root@$ip 'echo export PATH=\$PATH:\$JAVA_HOME/bin:\$JRE_HOME/bin >>/etc/profile'
+    #使目标服务器环境变量生效
+    ssh root@$ip 'echo ". /etc/profile" >./effect && sh ./effect && rm -rf ./effect'
+    
+    #检测是否成功
+    ssh root@$ip '. /etc/profile && java -version' >/dev/null
+    flags_jre=$(echo $?)
+    flags_jdk=0
+    if [ "$flags_jre" -eq 0 ]
+    then
+      #检测是否存在JDK环境
+      ssh root@$ip '. /etc/profile && javac -version' >/dev/null
+      flags_jdk=$(echo $?)
+      if [ "$flags_jdk" -eq 0 ]
+      then
+        action "成功配置JDK环境" /bin/true
+      else
+        action "成功配置JDK环境" /bin/false
+      fi
+    else
+      action "成功配置JDK环境" /bin/false
+    fi
+  fi
+}
+
+tomcat_install(){
+  
+  cp -r $wardir/tomcat $wardir/tomcat$Now
+  cp ${pkgname_path}.war  $wardir/tomcat$Now/webapps/${pkgname_path}${Now}.war
+
+  sed -i "10s#_group01#${Now}#g" $wardir/tomcat$Now/init.d/tomcat
+  #进入wardir目录
+  cd "$wardir"
+
+  #修改tomcat server.xml文件（启动端口，关闭端口，war包项目路径）
+  sed -i "s#8005#$shutdown_port#" $wardir/tomcat$Now/conf/server.xml
+  sed -i "s#8080#$start_port#" $wardir/tomcat$Now/conf/server.xml
+  sed -i "s#XXX#${pkgname_path}${Now}#" $wardir/tomcat$Now/conf/server.xml
+
+  #对tomcat目录进行压缩
+  tar -zcf tomcat${Now}.tar.gz tomcat$Now  
+
+  #判断端口号有没有被占用
+  lsof -i:$start_port
+  flags=$(echo $?)
+  if [ "$flags" -ne 0 ]
+  then
+    action "正在检测tomcat端口是否可用" /bin/true
+    action "tomcat端口可用" /bin/true
+  else
+    action "tomcat端口可用" /bin/false
+    exit 1
+  fi
+
+  #复制tomcat到目标服务器 
+  scp $wardir/tomcat${Now}.tar.gz root@$ip:$tomcat_pro
+  flags=$(echo $?)
+  if [ "$flags" -eq 0 ]
+  then
+    action "复制tomcat到目标服务器" /bin/true
+  else
+    action "复制tomcat到目标服务器" /bin/false
+    exit 1
+  fi
+  
+  #rm -rf $wardir/tomcat_group01.tar.gz $wardir/tomcat_group01
+  flags=$(ssh root@$ip "tar zxf $tomcat_pro/tomcat${Now}.tar.gz -C $tomcat_pro" ; echo $?)
+  if [ "$flags" -eq 0 ]
+  then
+    action "对tomcat压缩包进行解压缩" /bin/true
+  else
+    action "对tomcat压缩包进行解压缩" /bin/false
+    exit 1
+  fi
+   
+  flags=$(ssh root@$ip "cp -a  $tomcat_pro/tomcat${Now}/init.d/tomcat /etc/init.d/tomcat${Now}";echo $?)
+  if [ "$flags" -eq 0 ]
+  then
+    action "对tomcat压缩包进行解压缩" /bin/true
+  else
+    action "对tomcat压缩包进行解压缩" /bin/false
+    exit 1
+  fi
+   
+  ssh root@$ip "service tomcat${Now} start"
+  action "tomcat${Now}服务已经启动" /bin/true
+  #加入开机启动
+  ssh root@$ip chkconfig --add tomcat${Now}
+  #删除已经处理的tomcat程序包（复制模板之后的包）
+  rm -rf $wardir/tomcat${Now}*
+  #删除已经处理的war包
+  #rm -rf $codedir/${code_pkgname}*
+
+  
+  
+   
+  
+}
+
+#=============================函数测==试区域===========================#
+deploy_sshkey
+#ant_build
+jdk_install
+tomcat_install

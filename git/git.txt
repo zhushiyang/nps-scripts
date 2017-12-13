@@ -1,0 +1,1 @@
+sh git.sh http://zhushiyang:12345678@git.neumooc.com/test/testpro.git group01 /test/test

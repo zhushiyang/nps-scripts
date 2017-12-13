@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+
+#action:Deploying ssh public_key to web host
+#time:2017/7/6 9:41
+#
+#语法：expect create_mysqluser.exp \"$dbname\" \"$group_dbpasswd\" $dbname \'$group_dbpasswd\'
+
+set gpdbuser [lindex $argv 0 ]
+set gpdbpasswd [lindex $argv 1 ]
+set gpdbuser_init [lindex $argv 2 ]
+set gpdbname_init [lindex $argv 3 ]
+set gpdbpasswd_init [lindex $argv 4 ]
+
+spawn mysql -uroot -ptoor
+ expect { 
+    "mysql>*" { 
+        send "create user $gpdbuser@'%' IDENTIFIED BY '$gpdbpasswd_init';\n"
+        send "grant all privileges on $gpdbname_init.* to $gpdbuser_init@'%' identified by '$gpdbpasswd_init';\n"
+       # send ""
+        send "flush privileges;\n"
+        send "exit\r"
+    } 
+ }
+
+expect "100%"

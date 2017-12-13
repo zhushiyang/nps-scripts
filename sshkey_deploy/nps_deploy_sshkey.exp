@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+#action:Deploying ssh public_key to web host
+#time:2017/7/6 9:41
+
+set ip [lindex $argv 0 ]
+set username root
+set passwd "nep1q2w.3e"
+
+spawn ssh-copy-id $username@$ip
+ expect { 
+    "(yes/no)?" { 
+        send "yes\n"
+        expect "assword:"
+        send "$passwd\n"
+    } 
+ "assword:" { 
+        send "$passwd\n"
+    } 
+    
+ }
+expect "100%"

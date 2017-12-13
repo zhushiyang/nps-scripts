@@ -1,0 +1,75 @@
+#!/bin/bash
+
+. /etc/init.d/functions
+
+UWSGI=`which uwsgi`
+NAME='uwsgi-PYTHON_SPORT'
+CONFIGFILE=/etc/$NAME.ini
+
+do_start(){
+  
+  pidnum=`ps aux|grep -v 'grep'|grep $NAME|wc -l` 
+  if [ $pidnum -ge 2 ];then
+     echo "USAGE:$NAME is running"
+  else
+     $UWSGI --ini $CONFIGFILE>/dev/null 2>&1
+     if [ `echo $?` -eq 0 ]
+       then 
+          action "Starting $NAME" /bin/true 
+       else
+          action "Starting $NAME" /bin/false
+          exit 1
+     fi
+  fi
+
+}
+
+do_stop(){
+   
+   for pid in `ps -ef|grep -v 'grep'|grep uwsgi8088|awk '{print $2}'|xargs -n2`
+   do
+      kill -9 $pid 
+   done
+   if [ `ps aux|grep -v 'grep'|grep $NAME|wc -l` -eq 0 ]
+     then
+       action "Stoping $NAME" /bin/true
+     else
+       action "Stoping $NAME" /bin/false
+       exit 1
+   fi
+
+}
+
+do_status(){
+
+   ps -ef|grep -v 'grep'|grep $NAME
+
+}
+
+do_reload(){
+   
+    do_stop
+    do_start
+
+}
+
+
+case "$1" in
+ status)
+   do_status
+ ;;
+ start)
+   do_start
+ ;;
+ stop)
+   do_stop
+ ;;
+ restart)
+   do_reload
+ ;;
+ *)
+   echo "Usage: $0 {start|stop|restart}"
+   exit 3
+ ;;
+esac
+
